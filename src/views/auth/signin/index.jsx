@@ -16,6 +16,9 @@ import * as Yup from 'yup';
 
 const PhoneInput = PhoneInputExport.default || PhoneInputExport;
 
+// TEMPORARY DEMO MODE FOR ISSUE #32
+const PHONE_AUTH_DEMO_MODE = true;
+
 const SignInSchema = Yup.object().shape({
   email: Yup.string()
     .email('Email is not valid.')
@@ -35,6 +38,9 @@ const SignIn = ({ history }) => {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const [confirmationResult, setConfirmationResult] = useState(null);
+  const [isDemoOtpSent, setIsDemoOtpSent] = useState(false);
+  const [isDemoPhoneVerified, setIsDemoPhoneVerified] = useState(false);
+  const [phoneAuthMessage, setPhoneAuthMessage] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
   const recaptchaVerifier = useRef(null);
@@ -48,7 +54,7 @@ const SignIn = ({ history }) => {
   }, []);
 
   useEffect(() => {
-    if (!isPhoneAuth) return undefined;
+    if (!isPhoneAuth || PHONE_AUTH_DEMO_MODE) return undefined;
 
     recaptchaVerifier.current = firebase.createPhoneRecaptchaVerifier('phone-auth-recaptcha');
     return () => {
@@ -90,8 +96,13 @@ const SignIn = ({ history }) => {
     setIsSendingCode(true);
     dispatch(setAuthStatus(null));
     try {
-      const result = await firebase.signInWithPhoneNumber(`+${phoneNumber}`, recaptchaVerifier.current);
-      setConfirmationResult(result);
+      if (PHONE_AUTH_DEMO_MODE) {
+        setIsDemoOtpSent(true);
+        setPhoneAuthMessage('Demo OTP sent. Use 123456');
+      } else {
+        const result = await firebase.signInWithPhoneNumber(`+${phoneNumber}`, recaptchaVerifier.current);
+        setConfirmationResult(result);
+      }
       setVerificationCode('');
     } catch (error) {
       setPhoneAuthError(error);
@@ -102,13 +113,24 @@ const SignIn = ({ history }) => {
 
   const onVerifyCode = async (event) => {
     event.preventDefault();
-    if (!confirmationResult || isSendingCode || isVerifyingCode || isAuthenticating) return;
+    if ((!PHONE_AUTH_DEMO_MODE && !confirmationResult)
+      || (PHONE_AUTH_DEMO_MODE && !isDemoOtpSent)
+      || isSendingCode || isVerifyingCode || isAuthenticating) return;
 
     setIsVerifyingCode(true);
-    dispatch(setAuthenticating(true));
     dispatch(setAuthStatus(null));
     try {
-      await confirmationResult.confirm(verificationCode);
+      if (PHONE_AUTH_DEMO_MODE) {
+        if (verificationCode === '123456') {
+          setIsDemoPhoneVerified(true);
+          setPhoneAuthMessage('Phone verified successfully (Demo)');
+        } else {
+          setPhoneAuthMessage('Invalid demo verification code.');
+        }
+      } else {
+        dispatch(setAuthenticating(true));
+        await confirmationResult.confirm(verificationCode);
+      }
     } catch (error) {
       dispatch(setAuthenticating(false));
       setPhoneAuthError(error);
@@ -120,13 +142,18 @@ const SignIn = ({ history }) => {
   const onChangeAuthMethod = () => {
     setIsPhoneAuth(!isPhoneAuth);
     setConfirmationResult(null);
+    setIsDemoOtpSent(false);
+    setIsDemoPhoneVerified(false);
     setVerificationCode('');
+    setPhoneAuthMessage('');
     dispatch(setAuthStatus(null));
   };
 
   const onBackToPhoneNumber = () => {
     setConfirmationResult(null);
+    setIsDemoOtpSent(false);
     setVerificationCode('');
+    setPhoneAuthMessage('');
     dispatch(setAuthStatus(null));
   };
 
@@ -222,80 +249,98 @@ const SignIn = ({ history }) => {
                   </>
                 ) : (
                   <div className="auth-field">
-                    <h4>{confirmationResult ? 'Enter the verification code' : 'Sign in with your phone'}</h4>
-                    {confirmationResult ? (
-                      <form onSubmit={onVerifyCode}>
-                        <div className="auth-field">
-                          <label className="label-input" htmlFor="verification-code">Verification code</label>
-                          <input
-                            autoComplete="one-time-code"
-                            className="input-form"
-                            id="verification-code"
-                            inputMode="numeric"
-                            maxLength="6"
-                            onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, ''))}
-                            required
-                            value={verificationCode}
-                          />
-                        </div>
-                        <br />
-                        <div className="auth-field auth-action">
-                          <button
-                            className="button button-border"
-                            disabled={isVerifyingCode || isAuthenticating}
-                            onClick={onBackToPhoneNumber}
-                            type="button"
-                          >
-                            Change number
-                          </button>
-                          <button
-                            className="button auth-button"
-                            disabled={!verificationCode || isVerifyingCode || isAuthenticating}
-                            type="submit"
-                          >
-                            {isVerifyingCode ? 'Verifying' : 'Verify code'}
-                            &nbsp;
-                            {isVerifyingCode ? <LoadingOutlined /> : <ArrowRightOutlined />}
-                          </button>
-                        </div>
-                      </form>
+                    {PHONE_AUTH_DEMO_MODE && <small>Demo Mode</small>}
+                    {isDemoPhoneVerified ? (
+                      <div className="auth-field">
+                        <h4>{phoneAuthMessage}</h4>
+                        <button
+                          className="button button-border"
+                          onClick={onChangeAuthMethod}
+                          type="button"
+                        >
+                          Back to email
+                        </button>
+                      </div>
+                    ) : (PHONE_AUTH_DEMO_MODE ? isDemoOtpSent : confirmationResult) ? (
+                      <>
+                        <h4>Enter the verification code</h4>
+                        {phoneAuthMessage && <p>{phoneAuthMessage}</p>}
+                        <form onSubmit={onVerifyCode}>
+                          <div className="auth-field">
+                            <label className="label-input" htmlFor="verification-code">Verification code</label>
+                            <input
+                              autoComplete="one-time-code"
+                              className="input-form"
+                              id="verification-code"
+                              inputMode="numeric"
+                              maxLength="6"
+                              onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, ''))}
+                              required
+                              value={verificationCode}
+                            />
+                          </div>
+                          <br />
+                          <div className="auth-field auth-action">
+                            <button
+                              className="button button-border"
+                              disabled={isVerifyingCode || isAuthenticating}
+                              onClick={onBackToPhoneNumber}
+                              type="button"
+                            >
+                              Back to phone number
+                            </button>
+                            <button
+                              className="button auth-button"
+                              disabled={!verificationCode || isVerifyingCode || isAuthenticating}
+                              type="submit"
+                            >
+                              {isVerifyingCode ? 'Verifying' : 'Verify code'}
+                              &nbsp;
+                              {isVerifyingCode ? <LoadingOutlined /> : <ArrowRightOutlined />}
+                            </button>
+                          </div>
+                        </form>
+                      </>
                     ) : (
-                      <form onSubmit={onSendVerificationCode}>
-                        <div className="auth-field">
-                          <label className="label-input" htmlFor="phone-number">Phone number</label>
-                          <PhoneInput
-                            country="in"
-                            disabled={isSendingCode || isAuthenticating}
-                            enableSearch
-                            inputClass="input-form d-block"
-                            inputProps={{ id: 'phone-number', name: 'phoneNumber', required: true }}
-                            onChange={setPhoneNumber}
-                            placeholder="Phone number"
-                            value={phoneNumber}
-                          />
-                        </div>
-                        <div id="phone-auth-recaptcha" />
-                        <br />
-                        <div className="auth-field auth-action">
-                          <button
-                            className="button button-border"
-                            disabled={isSendingCode || isAuthenticating}
-                            onClick={onChangeAuthMethod}
-                            type="button"
-                          >
-                            Back to email
-                          </button>
-                          <button
-                            className="button auth-button"
-                            disabled={!phoneNumber || isSendingCode || isAuthenticating}
-                            type="submit"
-                          >
-                            {isSendingCode ? 'Sending code' : 'Send verification code'}
-                            &nbsp;
-                            {isSendingCode ? <LoadingOutlined /> : <ArrowRightOutlined />}
-                          </button>
-                        </div>
-                      </form>
+                      <>
+                        <h4>Sign in with your phone</h4>
+                        <form onSubmit={onSendVerificationCode}>
+                          <div className="auth-field">
+                            <label className="label-input" htmlFor="phone-number">Phone number</label>
+                            <PhoneInput
+                              country="in"
+                              disabled={isSendingCode || isAuthenticating}
+                              enableSearch
+                              inputClass="input-form d-block"
+                              inputProps={{ id: 'phone-number', name: 'phoneNumber', required: true }}
+                              onChange={setPhoneNumber}
+                              placeholder="Phone number"
+                              value={phoneNumber}
+                            />
+                          </div>
+                          <div id="phone-auth-recaptcha" />
+                          <br />
+                          <div className="auth-field auth-action">
+                            <button
+                              className="button button-border"
+                              disabled={isSendingCode || isAuthenticating}
+                              onClick={onChangeAuthMethod}
+                              type="button"
+                            >
+                              Back to email
+                            </button>
+                            <button
+                              className="button auth-button"
+                              disabled={!phoneNumber || isSendingCode || isAuthenticating}
+                              type="submit"
+                            >
+                              {isSendingCode ? 'Sending code' : 'Send verification code'}
+                              &nbsp;
+                              {isSendingCode ? <LoadingOutlined /> : <ArrowRightOutlined />}
+                            </button>
+                          </div>
+                        </form>
+                      </>
                     )}
                   </div>
                 )}
